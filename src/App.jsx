@@ -1,13 +1,14 @@
-cat > app.jsx << 'EOF'
 import React, { useState, useEffect, useRef } from "react";
+import { createClient } from "@supabase/supabase-js";
 import { Plus, X, Settings, Trash2, GripVertical, Users, Filter, Pencil, Check, Clock, Moon, Sun } from "lucide-react";
+
+const SUPABASE_URL = "https://lzpvctjxfxdkqxdnetzn.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_-eC77WM8jOhS0onlH7WK4g_0EvJJ4Ey";
 
 const uid = () =>
   typeof crypto !== "undefined" && crypto.randomUUID
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2) + Date.now().toString(36);
-
-const STORAGE_KEY = "team-kanban-v1";
 
 const PRIORITIES = ["Critical", "High", "Medium", "Low"];
 
@@ -56,33 +57,8 @@ function useEsc(onClose) {
   }, [onClose]);
 }
 
-const seedState = () => {
-  const stages = [
-    { id: uid(), name: "In Queue" },
-    { id: uid(), name: "Working On" },
-    { id: uid(), name: "Need Assistance" },
-    { id: uid(), name: "Completed" },
-    { id: uid(), name: "Deprioritized" },
-  ];
-  return {
-    stages,
-    team: ["Derek Mitchell", "JP Grant III", "Four"],
-    scopes: ["Muni", "Lighting", "Admin"],
-    cards: [
-      {
-        id: uid(),
-        stageId: stages[0].id,
-        summary: "Example: New Orleans bond closing checklist",
-        owner: "Four",
-        scope: "Muni",
-        priority: "High",
-        detail: "Click any card to edit every field. Drag a card between columns to change its stage.",
-        createdAt: Date.now(),
-        completedAt: null,
-      },
-    ],
-  };
-};
+const _client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const supabaseClient = async () => _client;
 
 export default function App() {
   const [state, setState] = useState(null);
@@ -98,24 +74,69 @@ export default function App() {
   const [dragOverStage, setDragOverStage] = useState(null);
   const firstLoad = useRef(true);
 
-  // Load persisted board (shared across everyone who opens this board)
+  // Apply dark class to document so Tailwind dark: variants (badges) work
+  useEffect(() => {
+    const root = document.documentElement;
+    if (darkMode) root.classList.add("dark");
+    else root.classList.remove("dark");
+  }, [darkMode]);
+
+  // Initialize Supabase and load data
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        if (typeof window !== "undefined" && window.storage) {
-          const res = await window.storage.get(STORAGE_KEY, true);
-          if (active && res && res.value) {
-            setState(JSON.parse(res.value));
-            setLoading(false);
-            return;
-          }
+        const client = await supabaseClient();
+
+        // Load state
+        const { data: stateData } = await client
+          .from('kanban_state')
+          .select('*')
+          .single();
+
+        if (active && stateData) {
+          setState(JSON.parse(stateData.data));
+          setLoading(false);
+          return;
+        }
+
+        // Create initial state
+        const stages = [
+          { id: uid(), name: "In Queue" },
+          { id: uid(), name: "Working On" },
+          { id: uid(), name: "Need Assistance" },
+          { id: uid(), name: "Completed" },
+          { id: uid(), name: "Deprioritized" },
+        ];
+        
+        const initialState = {
+          stages,
+          team: ["Derek Mitchell", "JP Grant III", "Four"],
+          scopes: ["Muni", "Lighting", "Admin"],
+          cards: [
+            {
+              id: uid(),
+              stageId: stages[0].id,
+              summary: "Example: New Orleans bond closing checklist",
+              owner: "Four",
+              scope: "Muni",
+              priority: "High",
+              detail: "Click any card to edit every field. Drag a card between columns to change its stage.",
+              createdAt: Date.now(),
+              completedAt: null,
+            },
+          ],
+        };
+
+        if (active) {
+          await client.from('kanban_state').insert([
+            { id: 1, data: JSON.stringify(initialState) }
+          ]);
+          setState(initialState);
+          setLoading(false);
         }
       } catch (e) {
-        // No saved board yet, or storage unavailable. Fall through to seed.
-      }
-      if (active) {
-        setState(seedState());
+        console.error("Error initializing:", e);
         setLoading(false);
       }
     })();
@@ -124,28 +145,33 @@ export default function App() {
     };
   }, []);
 
-  // Persist on change
+  // Save to Supabase on change
   useEffect(() => {
-    if (loading || !state) return;
-    if (firstLoad.current) {
-      firstLoad.current = false;
+    if (loading || !state || firstLoad.current) {
+      if (!loading && state) firstLoad.current = false;
       return;
     }
+    
     (async () => {
       try {
-        if (typeof window !== "undefined" && window.storage) {
-          await window.storage.set(STORAGE_KEY, JSON.stringify(state), true);
-        }
+        const client = await supabaseClient();
+        await client
+          .from('kanban_state')
+          .update({ data: JSON.stringify(state) })
+          .eq('id', 1);
       } catch (e) {
-        // Write failed; board still works in-session.
+        console.error("Error saving:", e);
       }
     })();
   }, [state, loading]);
 
   if (loading || !state) {
     return (
-      <div className="flex h-screen items-center justify-center bg-slate-50 text-slate-400">
-        Loading board...
+      <div style={{ backgroundColor: "#f8fafc", color: "#64748b" }} className="flex h-screen items-center justify-center text-center">
+        <div>
+          <div className="text-lg font-semibold mb-2">Loading board...</div>
+          <div className="text-sm">If this takes more than a few seconds, check your Supabase connection</div>
+        </div>
       </div>
     );
   }
@@ -458,6 +484,7 @@ export default function App() {
           onChange={(patch) => updateCard(openCard.id, patch)}
           onDelete={() => deleteCard(openCard.id)}
           onClose={() => setOpenCardId(null)}
+          darkMode={darkMode}
         />
       )}
 
@@ -469,6 +496,7 @@ export default function App() {
           scopes={state.scopes}
           onCreate={createTask}
           onClose={() => setShowNewTask(false)}
+          darkMode={darkMode}
         />
       )}
 
@@ -478,6 +506,7 @@ export default function App() {
           state={state}
           setState={setState}
           onClose={() => setShowSettings(false)}
+          darkMode={darkMode}
         />
       )}
     </div>
@@ -553,9 +582,6 @@ function StageHeader({ stage, count, onRename, onDelete, darkMode }) {
   );
 }
 
-const selectCls =
-  "w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 dark:text-slate-100 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400";
-
 function Field({ label, children }) {
   return (
     <div>
@@ -565,12 +591,15 @@ function Field({ label, children }) {
   );
 }
 
-function CardModal({ card, team, stages, scopes, scopeStyle, onChange, onDelete, onClose }) {
+const selectCls =
+  "w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 dark:text-slate-100 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400";
+
+function CardModal({ card, team, stages, scopes, scopeStyle, onChange, onDelete, onClose, darkMode }) {
   useEsc(onClose);
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 dark:bg-slate-900/60 p-4 sm:p-8">
-      <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-slate-800 shadow-xl">
-        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 px-5 py-3.5">
+    <div style={{ backgroundColor: darkMode ? "rgba(0,0,0,0.6)" : "rgba(15,23,42,0.16)" }} className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8">
+      <div style={{ backgroundColor: darkMode ? "#1e293b" : "#ffffff" }} className="w-full max-w-lg rounded-2xl shadow-xl">
+        <div style={{ borderBottomColor: darkMode ? "#334155" : "#e2e8f0" }} className="flex items-center justify-between border-b px-5 py-3.5">
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${scopeStyle(card.scope)}`}>
@@ -581,9 +610,9 @@ function CardModal({ card, team, stages, scopes, scopeStyle, onChange, onDelete,
                 {card.priority}
               </span>
             </div>
-            <span className="text-xs text-slate-400 dark:text-slate-500">Created {new Date(card.createdAt).toLocaleDateString()}</span>
+            <span style={{ color: darkMode ? "#64748b" : "#64748b" }} className="text-xs">Created {new Date(card.createdAt).toLocaleDateString()}</span>
           </div>
-          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
+          <button onClick={onClose} style={{ color: darkMode ? "#64748b" : "#a1acb8" }} className="hover:text-slate-700">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -594,13 +623,22 @@ function CardModal({ card, team, stages, scopes, scopeStyle, onChange, onDelete,
               value={card.summary}
               onChange={(e) => onChange({ summary: e.target.value })}
               placeholder="Short title for the board"
+              style={{
+                backgroundColor: darkMode ? "#0f172a" : "#ffffff",
+                borderColor: darkMode ? "#475569" : "#cbd5e1",
+                color: darkMode ? "#f1f5f9" : "#1e293b",
+              }}
               className={selectCls}
             />
           </Field>
 
           <div className="grid grid-cols-2 gap-3">
             <Field label="Owner">
-              <select value={card.owner} onChange={(e) => onChange({ owner: e.target.value })} className={selectCls}>
+              <select value={card.owner} onChange={(e) => onChange({ owner: e.target.value })} style={{
+                backgroundColor: darkMode ? "#0f172a" : "#ffffff",
+                borderColor: darkMode ? "#475569" : "#cbd5e1",
+                color: darkMode ? "#f1f5f9" : "#1e293b",
+              }} className={selectCls}>
                 {team.map((m) => (
                   <option key={m} value={m}>
                     {m}
@@ -609,7 +647,11 @@ function CardModal({ card, team, stages, scopes, scopeStyle, onChange, onDelete,
               </select>
             </Field>
             <Field label="Stage">
-              <select value={card.stageId} onChange={(e) => onChange({ stageId: e.target.value })} className={selectCls}>
+              <select value={card.stageId} onChange={(e) => onChange({ stageId: e.target.value })} style={{
+                backgroundColor: darkMode ? "#0f172a" : "#ffffff",
+                borderColor: darkMode ? "#475569" : "#cbd5e1",
+                color: darkMode ? "#f1f5f9" : "#1e293b",
+              }} className={selectCls}>
                 {stages.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
@@ -618,7 +660,11 @@ function CardModal({ card, team, stages, scopes, scopeStyle, onChange, onDelete,
               </select>
             </Field>
             <Field label="Scope">
-              <select value={card.scope} onChange={(e) => onChange({ scope: e.target.value })} className={selectCls}>
+              <select value={card.scope} onChange={(e) => onChange({ scope: e.target.value })} style={{
+                backgroundColor: darkMode ? "#0f172a" : "#ffffff",
+                borderColor: darkMode ? "#475569" : "#cbd5e1",
+                color: darkMode ? "#f1f5f9" : "#1e293b",
+              }} className={selectCls}>
                 {scopes.map((s) => (
                   <option key={s} value={s}>
                     {s}
@@ -627,7 +673,11 @@ function CardModal({ card, team, stages, scopes, scopeStyle, onChange, onDelete,
               </select>
             </Field>
             <Field label="Priority">
-              <select value={card.priority} onChange={(e) => onChange({ priority: e.target.value })} className={selectCls}>
+              <select value={card.priority} onChange={(e) => onChange({ priority: e.target.value })} style={{
+                backgroundColor: darkMode ? "#0f172a" : "#ffffff",
+                borderColor: darkMode ? "#475569" : "#cbd5e1",
+                color: darkMode ? "#f1f5f9" : "#1e293b",
+              }} className={selectCls}>
                 {PRIORITIES.map((p) => (
                   <option key={p} value={p}>
                     {p}
@@ -643,21 +693,31 @@ function CardModal({ card, team, stages, scopes, scopeStyle, onChange, onDelete,
               onChange={(e) => onChange({ detail: e.target.value })}
               rows={6}
               placeholder="Notes, context, links, next steps..."
+              style={{
+                backgroundColor: darkMode ? "#0f172a" : "#ffffff",
+                borderColor: darkMode ? "#475569" : "#cbd5e1",
+                color: darkMode ? "#f1f5f9" : "#1e293b",
+              }}
               className={`${selectCls} resize-y`}
             />
           </Field>
         </div>
 
-        <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-700 px-5 py-3">
+        <div style={{ borderTopColor: darkMode ? "#334155" : "#e2e8f0" }} className="flex items-center justify-between border-t px-5 py-3">
           <button
             onClick={onDelete}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
+            style={{ color: darkMode ? "#f87171" : "#dc2626" }}
+            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium hover:opacity-90"
           >
             <Trash2 className="h-4 w-4" /> Delete task
           </button>
           <button
             onClick={onClose}
-            className="rounded-lg bg-slate-900 dark:bg-slate-100 px-4 py-1.5 text-sm font-medium text-white dark:text-slate-900 hover:bg-slate-700 dark:hover:bg-slate-200"
+            style={{
+              backgroundColor: darkMode ? "#334155" : "#1e293b",
+              color: darkMode ? "#f1f5f9" : "#ffffff",
+            }}
+            className="rounded-lg px-4 py-1.5 text-sm font-medium hover:opacity-90"
           >
             Done
           </button>
@@ -667,7 +727,7 @@ function CardModal({ card, team, stages, scopes, scopeStyle, onChange, onDelete,
   );
 }
 
-function NewTaskModal({ team, stages, scopes, onCreate, onClose }) {
+function NewTaskModal({ team, stages, scopes, onCreate, onClose, darkMode }) {
   useEsc(onClose);
   const [d, setD] = useState({
     summary: "",
@@ -688,11 +748,11 @@ function NewTaskModal({ team, stages, scopes, onCreate, onClose }) {
   const req = <span className="text-red-500">*</span>;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 dark:bg-slate-900/60 p-4 sm:p-8">
-      <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-slate-800 shadow-xl">
-        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 px-5 py-3.5">
-          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">New task</h2>
-          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
+    <div style={{ backgroundColor: darkMode ? "rgba(0,0,0,0.6)" : "rgba(15,23,42,0.16)" }} className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8">
+      <div style={{ backgroundColor: darkMode ? "#1e293b" : "#ffffff" }} className="w-full max-w-lg rounded-2xl shadow-xl">
+        <div style={{ borderBottomColor: darkMode ? "#334155" : "#e2e8f0" }} className="flex items-center justify-between border-b px-5 py-3.5">
+          <h2 style={{ color: darkMode ? "#f1f5f9" : "#1e293b" }} className="text-base font-semibold">New task</h2>
+          <button onClick={onClose} style={{ color: darkMode ? "#64748b" : "#a1acb8" }} className="hover:text-slate-700">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -704,13 +764,22 @@ function NewTaskModal({ team, stages, scopes, onCreate, onClose }) {
               value={d.summary}
               onChange={(e) => set({ summary: e.target.value })}
               placeholder="Short title for the board"
+              style={{
+                backgroundColor: darkMode ? "#0f172a" : "#ffffff",
+                borderColor: darkMode ? "#475569" : "#cbd5e1",
+                color: darkMode ? "#f1f5f9" : "#1e293b",
+              }}
               className={selectCls}
             />
           </Field>
 
           <div className="grid grid-cols-2 gap-3">
             <Field label={<>Owner {req}</>}>
-              <select value={d.owner} onChange={(e) => set({ owner: e.target.value })} className={selectCls}>
+              <select value={d.owner} onChange={(e) => set({ owner: e.target.value })} style={{
+                backgroundColor: darkMode ? "#0f172a" : "#ffffff",
+                borderColor: darkMode ? "#475569" : "#cbd5e1",
+                color: darkMode ? "#f1f5f9" : "#1e293b",
+              }} className={selectCls}>
                 <option value="" disabled>
                   Select owner
                 </option>
@@ -722,7 +791,11 @@ function NewTaskModal({ team, stages, scopes, onCreate, onClose }) {
               </select>
             </Field>
             <Field label={<>Stage {req}</>}>
-              <select value={d.stageId} onChange={(e) => set({ stageId: e.target.value })} className={selectCls}>
+              <select value={d.stageId} onChange={(e) => set({ stageId: e.target.value })} style={{
+                backgroundColor: darkMode ? "#0f172a" : "#ffffff",
+                borderColor: darkMode ? "#475569" : "#cbd5e1",
+                color: darkMode ? "#f1f5f9" : "#1e293b",
+              }} className={selectCls}>
                 <option value="" disabled>
                   Select stage
                 </option>
@@ -734,7 +807,11 @@ function NewTaskModal({ team, stages, scopes, onCreate, onClose }) {
               </select>
             </Field>
             <Field label={<>Scope {req}</>}>
-              <select value={d.scope} onChange={(e) => set({ scope: e.target.value })} className={selectCls}>
+              <select value={d.scope} onChange={(e) => set({ scope: e.target.value })} style={{
+                backgroundColor: darkMode ? "#0f172a" : "#ffffff",
+                borderColor: darkMode ? "#475569" : "#cbd5e1",
+                color: darkMode ? "#f1f5f9" : "#1e293b",
+              }} className={selectCls}>
                 <option value="" disabled>
                   Select scope
                 </option>
@@ -746,7 +823,11 @@ function NewTaskModal({ team, stages, scopes, onCreate, onClose }) {
               </select>
             </Field>
             <Field label={<>Priority {req}</>}>
-              <select value={d.priority} onChange={(e) => set({ priority: e.target.value })} className={selectCls}>
+              <select value={d.priority} onChange={(e) => set({ priority: e.target.value })} style={{
+                backgroundColor: darkMode ? "#0f172a" : "#ffffff",
+                borderColor: darkMode ? "#475569" : "#cbd5e1",
+                color: darkMode ? "#f1f5f9" : "#1e293b",
+              }} className={selectCls}>
                 <option value="" disabled>
                   Select priority
                 </option>
@@ -765,26 +846,38 @@ function NewTaskModal({ team, stages, scopes, onCreate, onClose }) {
               onChange={(e) => set({ detail: e.target.value })}
               rows={5}
               placeholder="Notes, context, links, next steps..."
+              style={{
+                backgroundColor: darkMode ? "#0f172a" : "#ffffff",
+                borderColor: darkMode ? "#475569" : "#cbd5e1",
+                color: darkMode ? "#f1f5f9" : "#1e293b",
+              }}
               className={`${selectCls} resize-y`}
             />
           </Field>
         </div>
 
-        <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-700 px-5 py-3">
+        <div style={{ borderTopColor: darkMode ? "#334155" : "#e2e8f0" }} className="flex items-center justify-between border-t px-5 py-3">
           <span className="text-xs text-slate-400 dark:text-slate-500">{req} Required</span>
           <div className="flex items-center gap-2">
             <button
               onClick={onClose}
-              className="rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 px-4 py-1.5 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600"
+              style={{
+                backgroundColor: darkMode ? "#0f172a" : "#ffffff",
+                borderColor: darkMode ? "#475569" : "#e2e8f0",
+                color: darkMode ? "#f1f5f9" : "#64748b",
+              }}
+              className="rounded-lg border px-4 py-1.5 text-sm font-medium hover:opacity-90"
             >
               Cancel
             </button>
             <button
               onClick={submit}
               disabled={!valid}
-              className={`rounded-lg px-4 py-1.5 text-sm font-medium text-white ${
-                valid ? "bg-slate-900 dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-700 dark:hover:bg-slate-200" : "cursor-not-allowed bg-slate-300 dark:bg-slate-600"
-              }`}
+              style={{
+                backgroundColor: valid ? (darkMode ? "#334155" : "#1e293b") : (darkMode ? "#475569" : "#cbd5e1"),
+                color: valid ? (darkMode ? "#f1f5f9" : "#ffffff") : (darkMode ? "#94a3b8" : "#64748b"),
+              }}
+              className={`rounded-lg px-4 py-1.5 text-sm font-medium ${!valid ? "cursor-not-allowed" : ""}`}
             >
               Create task
             </button>
@@ -795,7 +888,7 @@ function NewTaskModal({ team, stages, scopes, onCreate, onClose }) {
   );
 }
 
-function EditableList({ icon, title, items, onAdd, onRemove, note }) {
+function EditableList({ icon, title, items, onAdd, onRemove, note, darkMode }) {
   const [val, setVal] = useState("");
   return (
     <div>
@@ -807,10 +900,15 @@ function EditableList({ icon, title, items, onAdd, onRemove, note }) {
         {items.map((it) => (
           <span
             key={it}
-            className="flex items-center gap-1 rounded-full bg-slate-100 dark:bg-slate-700 px-2.5 py-1 text-sm text-slate-700 dark:text-slate-300 ring-1 ring-slate-200 dark:ring-slate-600"
+            style={{
+              backgroundColor: darkMode ? "#334155" : "#f1f5f9",
+              borderColor: darkMode ? "#475569" : "#e2e8f0",
+              color: darkMode ? "#f1f5f9" : "#64748b",
+            }}
+            className="flex items-center gap-1 rounded-full px-2.5 py-1 text-sm ring-1"
           >
             {it}
-            <button onClick={() => onRemove(it)} className="text-slate-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400">
+            <button onClick={() => onRemove(it)} style={{ color: darkMode ? "#94a3b8" : "#a1acb8" }} className="hover:text-red-500 dark:hover:text-red-400">
               <X className="h-3.5 w-3.5" />
             </button>
           </span>
@@ -827,7 +925,12 @@ function EditableList({ icon, title, items, onAdd, onRemove, note }) {
             }
           }}
           placeholder={`Add ${title.toLowerCase()}`}
-          className="flex-1 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
+          style={{
+            backgroundColor: darkMode ? "#0f172a" : "#ffffff",
+            borderColor: darkMode ? "#475569" : "#cbd5e1",
+            color: darkMode ? "#f1f5f9" : "#1e293b",
+          }}
+          className="flex-1 rounded-lg border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
         />
         <button
           onClick={() => {
@@ -836,7 +939,11 @@ function EditableList({ icon, title, items, onAdd, onRemove, note }) {
               setVal("");
             }
           }}
-          className="rounded-lg bg-slate-900 dark:bg-slate-100 px-3 py-1.5 text-sm font-medium text-white dark:text-slate-900 hover:bg-slate-700 dark:hover:bg-slate-200"
+          style={{
+            backgroundColor: darkMode ? "#334155" : "#1e293b",
+            color: darkMode ? "#f1f5f9" : "#ffffff",
+          }}
+          className="rounded-lg px-3 py-1.5 text-sm font-medium hover:opacity-90"
         >
           Add
         </button>
@@ -846,7 +953,7 @@ function EditableList({ icon, title, items, onAdd, onRemove, note }) {
   );
 }
 
-function SettingsModal({ state, setState, onClose }) {
+function SettingsModal({ state, setState, onClose, darkMode }) {
   useEsc(onClose);
   const addTeam = (name) =>
     !state.team.includes(name) && setState((s) => ({ ...s, team: [...s.team, name] }));
@@ -858,11 +965,11 @@ function SettingsModal({ state, setState, onClose }) {
     setState((s) => ({ ...s, scopes: s.scopes.filter((sc) => sc !== name) }));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 dark:bg-slate-900/60 p-4 sm:p-8">
-      <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-800 shadow-xl">
-        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 px-5 py-3.5">
-          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">Board settings</h2>
-          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
+    <div style={{ backgroundColor: darkMode ? "rgba(0,0,0,0.6)" : "rgba(15,23,42,0.16)" }} className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8">
+      <div style={{ backgroundColor: darkMode ? "#1e293b" : "#ffffff" }} className="w-full max-w-md rounded-2xl shadow-xl">
+        <div style={{ borderBottomColor: darkMode ? "#334155" : "#e2e8f0" }} className="flex items-center justify-between border-b px-5 py-3.5">
+          <h2 style={{ color: darkMode ? "#f1f5f9" : "#1e293b" }} className="text-base font-semibold">Board settings</h2>
+          <button onClick={onClose} style={{ color: darkMode ? "#64748b" : "#a1acb8" }} className="hover:text-slate-700">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -874,6 +981,7 @@ function SettingsModal({ state, setState, onClose }) {
             onAdd={addTeam}
             onRemove={removeTeam}
             note="Owners come from this list. Removing a member leaves their tasks assigned to the old name until reassigned."
+            darkMode={darkMode}
           />
           <EditableList
             icon={<div className="h-3 w-3 rounded-sm bg-indigo-400" />}
@@ -881,12 +989,17 @@ function SettingsModal({ state, setState, onClose }) {
             items={state.scopes}
             onAdd={addScope}
             onRemove={removeScope}
+            darkMode={darkMode}
           />
         </div>
-        <div className="flex justify-end border-t border-slate-100 dark:border-slate-700 px-5 py-3">
+        <div style={{ borderTopColor: darkMode ? "#334155" : "#e2e8f0" }} className="flex justify-end border-t px-5 py-3">
           <button
             onClick={onClose}
-            className="rounded-lg bg-slate-900 dark:bg-slate-100 px-4 py-1.5 text-sm font-medium text-white dark:text-slate-900 hover:bg-slate-700 dark:hover:bg-slate-200"
+            style={{
+              backgroundColor: darkMode ? "#334155" : "#1e293b",
+              color: darkMode ? "#f1f5f9" : "#ffffff",
+            }}
+            className="rounded-lg px-4 py-1.5 text-sm font-medium hover:opacity-90"
           >
             Done
           </button>
