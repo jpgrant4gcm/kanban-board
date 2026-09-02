@@ -63,10 +63,11 @@ export default async function handler(req, res) {
 
     const [headerRow, ...bodyRows] = grid;
     if (!headerRow) {
-      res.status(200).json({ records: [] });
+      res.status(200).json({ records: [], headers: [] });
       return;
     }
     const header = headerRow.map((c) => c.value);
+    const headers = headerRow.map((c) => ({ label: c.value, bg: c.bg }));
 
     const records = bodyRows.map((row) =>
       Object.fromEntries(
@@ -74,7 +75,7 @@ export default async function handler(req, res) {
       )
     );
 
-    res.status(200).json({ records });
+    res.status(200).json({ records, headers });
   } catch (e) {
     console.error("G37 sheet fetch failed:", e.message);
     res.status(500).json({ error: "Failed to load G-37 data", detail: e.message });

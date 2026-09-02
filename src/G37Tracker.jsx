@@ -20,6 +20,7 @@ const COLUMNS = [
 
 export default function G37Tracker({ darkMode }) {
   const [records, setRecords] = useState([]);
+  const [headers, setHeaders] = useState(COLUMNS.map((label) => ({ label, bg: null })));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -40,6 +41,7 @@ export default function G37Tracker({ darkMode }) {
       const body = await resp.json();
       if (!resp.ok) throw new Error(body.detail || body.error || "Failed to load");
       setRecords(body.records || []);
+      if (body.headers?.length) setHeaders(body.headers);
     } catch (e) {
       setError(e.message || "Failed to load G-37 data");
     } finally {
@@ -102,13 +104,16 @@ export default function G37Tracker({ darkMode }) {
           <table className="min-w-full text-sm">
             <thead>
               <tr style={{ backgroundColor: darkMode ? "#0f172a" : "#f8fafc" }}>
-                {COLUMNS.map((col) => (
+                {headers.map((col) => (
                   <th
-                    key={col}
+                    key={col.label}
                     className="px-3 py-2 text-left font-medium whitespace-nowrap"
-                    style={{ color: darkMode ? "#94a3b8" : "#64748b" }}
+                    style={{
+                      color: col.bg ? "#111827" : darkMode ? "#94a3b8" : "#64748b",
+                      backgroundColor: col.bg || "transparent",
+                    }}
                   >
-                    {col}
+                    {col.label}
                   </th>
                 ))}
               </tr>
@@ -116,7 +121,7 @@ export default function G37Tracker({ darkMode }) {
             <tbody>
               {records.length === 0 && (
                 <tr>
-                  <td colSpan={COLUMNS.length} className="px-3 py-6 text-center text-slate-500">
+                  <td colSpan={headers.length} className="px-3 py-6 text-center text-slate-500">
                     No records found.
                   </td>
                 </tr>
@@ -127,18 +132,18 @@ export default function G37Tracker({ darkMode }) {
                   className="border-t"
                   style={{ borderColor: darkMode ? "#1e293b" : "#f1f5f9" }}
                 >
-                  {COLUMNS.map((col) => {
-                    const cell = row[col] || { value: "", bg: null };
+                  {headers.map((col) => {
+                    const cell = row[col.label] || { value: "", bg: null };
                     return (
                       <td
-                        key={col}
+                        key={col.label}
                         className="px-3 py-2 whitespace-nowrap"
                         style={{
                           color: cell.bg ? "#111827" : darkMode ? "#e2e8f0" : "#1e293b",
                           backgroundColor: cell.bg || "transparent",
                         }}
                       >
-                        {col === "Receipt Link" && cell.value ? (
+                        {col.label === "Receipt Link" && cell.value ? (
                           <a
                             href={cell.value}
                             target="_blank"
