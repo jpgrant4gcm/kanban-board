@@ -38,7 +38,7 @@ export default function G37Tracker({ darkMode }) {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await resp.json();
-      if (!resp.ok) throw new Error(body.error || "Failed to load");
+      if (!resp.ok) throw new Error(body.detail || body.error || "Failed to load");
       setRecords(body.records || []);
     } catch (e) {
       setError(e.message || "Failed to load G-37 data");

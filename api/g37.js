@@ -52,6 +52,6 @@ export default async function handler(req, res) {
     res.status(200).json({ records });
   } catch (e) {
     console.error("G37 sheet fetch failed:", e.message);
-    res.status(500).json({ error: "Failed to load G-37 data" });
+    res.status(500).json({ error: "Failed to load G-37 data", detail: e.message });
   }
 }
