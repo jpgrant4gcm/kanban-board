@@ -6,6 +6,17 @@ const SHEET_RANGE = process.env.G37_SHEET_RANGE || "Sheet1!A:K";
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
+// Sheets reports unset/white background as (1,1,1) or an empty object.
+// Treat that as "no highlight" so it doesn't clash with dark mode.
+function toCssColor(color) {
+  if (!color) return null;
+  const r = color.red ?? 0;
+  const g = color.green ?? 0;
+  const b = color.blue ?? 0;
+  if (r > 0.98 && g > 0.98 && b > 0.98) return null;
+  return `rgb(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)})`;
+}
+
 export default async function handler(req, res) {
   if (req.method !== "GET") {
     res.status(405).json({ error: "Method not allowed" });
@@ -33,20 +44,34 @@ export default async function handler(req, res) {
       scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
     });
 
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(
-      SHEET_RANGE
-    )}`;
+    // spreadsheets.get with a ranges filter + explicit fields pulls back grid
+    // data (values + effectiveFormat, which reflects conditional formatting
+    // results, not just manually-set colors) instead of plain values.
+    const fields = "sheets.data.rowData.values(formattedValue,effectiveFormat.backgroundColor)";
+    const url =
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}` +
+      `?ranges=${encodeURIComponent(SHEET_RANGE)}&fields=${encodeURIComponent(fields)}`;
     const sheetResp = await client.request({ url });
-    const rows = sheetResp.data.values || [];
-    const [header, ...body] = rows;
+    const rowData = sheetResp.data.sheets?.[0]?.data?.[0]?.rowData || [];
 
-    if (!header) {
+    const grid = rowData.map((row) =>
+      (row.values || []).map((cell) => ({
+        value: cell.formattedValue || "",
+        bg: toCssColor(cell.effectiveFormat?.backgroundColor),
+      }))
+    );
+
+    const [headerRow, ...bodyRows] = grid;
+    if (!headerRow) {
       res.status(200).json({ records: [] });
       return;
     }
+    const header = headerRow.map((c) => c.value);
 
-    const records = body.map((row) =>
-      Object.fromEntries(header.map((col, i) => [col, row[i] ?? ""]))
+    const records = bodyRows.map((row) =>
+      Object.fromEntries(
+        header.map((col, i) => [col, row[i] || { value: "", bg: null }])
+      )
     );
 
     res.status(200).json({ records });

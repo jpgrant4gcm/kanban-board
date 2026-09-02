@@ -127,22 +127,32 @@ export default function G37Tracker({ darkMode }) {
                   className="border-t"
                   style={{ borderColor: darkMode ? "#1e293b" : "#f1f5f9" }}
                 >
-                  {COLUMNS.map((col) => (
-                    <td key={col} className="px-3 py-2 whitespace-nowrap" style={{ color: darkMode ? "#e2e8f0" : "#1e293b" }}>
-                      {col === "Receipt Link" && row[col] ? (
-                        <a
-                          href={row[col]}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-sky-600 dark:text-sky-400 underline"
-                        >
-                          Receipt
-                        </a>
-                      ) : (
-                        row[col] || ""
-                      )}
-                    </td>
-                  ))}
+                  {COLUMNS.map((col) => {
+                    const cell = row[col] || { value: "", bg: null };
+                    return (
+                      <td
+                        key={col}
+                        className="px-3 py-2 whitespace-nowrap"
+                        style={{
+                          color: cell.bg ? "#111827" : darkMode ? "#e2e8f0" : "#1e293b",
+                          backgroundColor: cell.bg || "transparent",
+                        }}
+                      >
+                        {col === "Receipt Link" && cell.value ? (
+                          <a
+                            href={cell.value}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sky-600 dark:text-sky-400 underline"
+                          >
+                            Receipt
+                          </a>
+                        ) : (
+                          cell.value
+                        )}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
