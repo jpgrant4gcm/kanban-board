@@ -109,7 +109,7 @@ export default function G37Tracker({ darkMode }) {
                     key={col.label}
                     className="px-3 py-2 text-left font-medium whitespace-nowrap"
                     style={{
-                      color: col.bg ? "#111827" : darkMode ? "#94a3b8" : "#64748b",
+                      color: col.bg ? "#ffffff" : darkMode ? "#94a3b8" : "#64748b",
                       backgroundColor: col.bg || "transparent",
                     }}
                   >
